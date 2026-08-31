@@ -1,10 +1,10 @@
 bl_info = {
     "name": "Teksturonos",
     "author": "arbtttrn6",
-    "version": (1, 0),
+    "version": (1, 1),
     "blender": (2, 80, 0),
     "location": "Properties > Material > Teksturonos",
-    "description": "Для разного вытащенного с помощью UmodelViewer-а. По имени материалов на моделях ищет соответствующие mat-файлы для получения из них диффузных текстур.",
+    "description": "Для разного вытащенного с помощью UmodelViewer-а. По имени материалов на моделях ищет соответствующие mat-файлы для получения из них диффузных текстур и текстур нормалей.",
     "category": "Material",
 }
 
@@ -34,7 +34,7 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
             self.report({'ERROR'}, "Укажите путь к материалам")
             return {'CANCELLED'}
         
-        # Получение абсолютного пути
+        # Получаем абсолютный путь
         absolute_path = self.resolve_path(context, self.models_path)
         models_root = Path(absolute_path)
         
@@ -49,6 +49,7 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
         success_count = 0
         fail_count = 0
         
+        # Process each material slot of the active object
         for material_slot in obj.material_slots:
             material = material_slot.material
             if not material:
@@ -57,7 +58,7 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
             material_name = material.name
             self.report({'INFO'}, f"Обработка материала: {material_name}")
             
-            # Find the txt file with material name
+            # Поиск файла, описывающего материал
             txt_file = self.find_material_txt_file(models_root, material_name)
             
             if not txt_file:
@@ -65,23 +66,40 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
                 fail_count += 1
                 continue
             
+            # Чтение параметра цветовой текстуры
             diffuse_texture_name = self.read_diffuse_from_txt(txt_file)
             
-            if not diffuse_texture_name:
-                self.report({'WARNING'}, f"Не найден параметр диффуза в {txt_file}")
-                fail_count += 1
-                continue
+            # Чтение параметра карты нормалей
+            normal_texture_name = self.read_normal_from_txt(txt_file)
             
-            texture_path = self.find_texture_file(models_root, diffuse_texture_name)
+            # Чтение параметра текстуры отражений
+            specular_texture_name = self.read_specular_from_txt(txt_file)
             
-            if not texture_path:
-                self.report({'WARNING'}, f"Неуспешен поиск текстуры: {diffuse_texture_name}")
-                fail_count += 1
-                continue
+            diffuse_path = None
             
-            if self.assign_texture_to_material(material, str(texture_path)):
+            if diffuse_texture_name:
+                diffuse_path = self.find_texture_file(models_root, diffuse_texture_name)
+                if not diffuse_path:
+                    self.report({'WARNING'}, f"Неуспешен поиск текстуры: {diffuse_texture_name}")
+             
+            normal_path = None
+             
+            if normal_texture_name:
+                 normal_path = self.find_texture_file(models_root, normal_texture_name)
+                 if not normal_path:
+                    self.report({'WARNING'}, f"Неуспешен поиск текстуры: {normal_texture_name}")
+            
+            specular_path = None
+            
+            if specular_texture_name:
+                specular_path = self.find_texture_file(models_root, specular_texture_name)
+                if not specular_path:
+                    self.report({'WARNING'}, f"Неуспешен поиск текстуры: {specular_texture_name}")
+            
+            # Текстуры к материалу
+            if self.assign_textures_to_material(material, diffuse_path, normal_path, specular_path):
                 success_count += 1
-                self.report({'INFO'}, f"Успешно добавление текстуры к {material_name}")
+                self.report({'INFO'}, f"Успешно добавление текстур к {material_name}")
             else:
                 fail_count += 1
         
@@ -95,7 +113,7 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
                 if file.lower() == f"{material_name.lower()}.mat":
                     return Path(root) / file
                 
-                # Also check without extension
+                # Проверка без расширения
                 if file.lower().endswith('.mat') and file[:-4].lower() == material_name.lower():
                     return Path(root) / file
         return None
@@ -147,6 +165,32 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
             self.report({'ERROR'}, f"Ошибка при чтении {txt_file_path}: {str(e)}")
         return None
     
+    def read_normal_from_txt(self, txt_file_path):
+        """Чтение параметра текстуры нормалей из mat-файла"""
+        try:
+            with open(txt_file_path, 'r') as file:
+                for line in file:
+                    if line.strip().startswith('Normal='):
+                        normal_value = line.strip().split('=', 1)[1].strip()
+                        if normal_value:
+                            return normal_value
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка при чтении {txt_file_path}: {str(e)}")
+        return None
+    
+    def read_specular_from_txt(self, txt_file_path):
+        """Чтение параметра текстуры отражений из mat-файла"""
+        try:
+            with open(txt_file_path, 'r') as file:
+                for line in file:
+                    if line.strip().startswith('Specular='):
+                        specular_value = line.strip().split('=', 1)[1].strip()
+                        if specular_value:
+                            return specular_value
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка при чтении {txt_file_path}: {str(e)}")
+        return None
+    
     def find_texture_file(self, root_path, texture_name):
         """Поиск файла текстуры по имени"""
         # Добавить или изменить формат в зависимости от нужного формата текстуры
@@ -171,34 +215,15 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
                     
         return None
     
-    def assign_texture_to_material(self, material, texture_path):
-        """Assign texture to material nodes"""
+    def assign_textures_to_material(self, material, diffuse_path, normal_path, specular_path):
+        """Соединение текстур к узлам материала"""
         try:
-            # Включение использования материалом узлов/нод
+            # Включение использования материалом узлов-нод
             material.use_nodes = True
             nodes = material.node_tree.nodes
             links = material.node_tree.links
             
-            # Очищение существующих узлов/нод или поиск/создание узла текстуры
-            image_node = None
-            for node in nodes:
-                if node.type == 'TEX_IMAGE':
-                    image_node = node
-                    break
-            
-            if not image_node:
-                image_node = nodes.new(type='ShaderNodeTexImage')
-                image_node.location = (-300, 300)
-            
-            # Загрузка и добавление изображения
-            if bpy.data.images.find(texture_path) >= 0:
-                img = bpy.data.images[texture_path]
-            else:
-                img = bpy.data.images.load(texture_path)
-            
-            image_node.image = img
-            
-            # Соединение к Principled BSDF, если ещё не соединено
+            # Получаем или создаем Principled BSDF
             principled_node = None
             for node in nodes:
                 if node.type == 'BSDF_PRINCIPLED':
@@ -222,15 +247,112 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
                 
                 links.new(principled_node.outputs['BSDF'], output_node.inputs['Surface'])
             
-            # Соединение изображения с базовым цветом
-            links.new(image_node.outputs['Color'], principled_node.inputs['Base Color'])
+            # Обработка диффузной текстуры
+            if diffuse_path:
+                # Поиск или создание узла Diffuse текстуры
+                diffuse_node = None
+                for node in nodes:
+                    if node.type == 'TEX_IMAGE' and node.label == 'Diffuse':
+                        diffuse_node = node
+                        break
+                
+                if not diffuse_node:
+                    diffuse_node = nodes.new(type='ShaderNodeTexImage')
+                    diffuse_node.label = 'Diffuse'
+                    diffuse_node.location = (-300, 300)
+                
+                # Загрузка изображения для диффузной текстуры
+                diffuse_img = self.load_image(str(diffuse_path))
+                if diffuse_img:
+                    diffuse_node.image = diffuse_img
+                    # Соединение изображения с базовым цветом
+                    if not any(link.from_node == diffuse_node for link in links):
+                        links.new(diffuse_node.outputs['Color'], principled_node.inputs['Base Color'])
+            
+            # Обработка текстуры нормалей
+            if normal_path:
+                # Поиск или создание узла Normal текстуры
+                normal_node = None
+                for node in nodes:
+                    if node.type == 'TEX_IMAGE' and node.label == 'Normal':
+                        normal_node = node
+                        break
+                
+                if not normal_node:
+                    normal_node = nodes.new(type='ShaderNodeTexImage')
+                    normal_node.label = 'Normal'
+                    normal_node.location = (-450, -300)
+                
+                # Загрузка изображения для текстуры нормалей
+                normal_img = self.load_image(str(normal_path))
+                if normal_img:
+                    normal_node.image = normal_img
+                    
+                    normal_node.image.colorspace_settings.name = 'Non-Color'
+                    
+                    # Поиск или создание узла Normal Map
+                    normal_map_node = None
+                    for node in nodes:
+                        if node.type == 'NORMAL_MAP':
+                            normal_map_node = node
+                            break
+                    
+                    if not normal_map_node:
+                        normal_map_node = nodes.new(type='ShaderNodeNormalMap')
+                        normal_map_node.location = (-180, -300)
+                        normal_map_node.space = 'TANGENT'
+                    
+                    # Соединение текстуры с Normal Map
+                    if not any(link.from_node == normal_node for link in links):
+                        links.new(normal_node.outputs['Color'], normal_map_node.inputs['Color'])
+                    
+                    # Соединение Normal Map с Principled BSDF
+                    if not any(link.to_node == principled_node and link.to_socket == 'Normal' for link in links):
+                        links.new(normal_map_node.outputs['Normal'], principled_node.inputs['Normal'])
+            
+            # Обработка текстуры отражений
+            if specular_path:
+                # Поиск или создание узла Specular текстуры
+                specular_node = None
+                for node in nodes:
+                    if node.type == 'TEX_IMAGE' and node.label == 'Specular':
+                        specular_node = node
+                        break
+                
+                if not specular_node:
+                    specular_node = nodes.new(type='ShaderNodeTexImage')
+                    specular_node.label = 'Specular'
+                    specular_node.location = (-300, 0)
+                
+                # Загрузка изображения для текстуры отражений
+                specular_img = self.load_image(str(specular_path))
+                if specular_img:
+                    specular_node.image = specular_img
+                    specular_node.image.colorspace_settings.name = 'Non-Color'
+                    
+                    if not any(link.from_node == specular_node for link in links):
+                        links.new(specular_node.outputs['Color'], principled_node.inputs['Specular'])
             
             return True
             
         except Exception as e:
-            self.report({'ERROR'}, f"Ошибка добавления текстуры к {material.name}: {str(e)}")
+            self.report({'ERROR'}, f"Ошибка добавления текстур к {material.name}: {str(e)}")
             return False
-
+    
+    def load_image(self, image_path):
+        """Загрузка изображения в Blender"""
+        try:
+            # Проверяем, загружено ли уже изображение
+            for img in bpy.data.images:
+                if img.filepath == image_path:
+                    return img
+            
+            # Загружаем новое изображение
+            img = bpy.data.images.load(image_path)
+            return img
+        except Exception as e:
+            self.report({'ERROR'}, f"Ошибка загрузки изображения {image_path}: {str(e)}")
+            return None
 
 class MATERIAL_PT_texture_importer(bpy.types.Panel):
     """Панель для текстуроноса в настройках материала"""
@@ -251,6 +373,7 @@ class MATERIAL_PT_texture_importer(bpy.types.Panel):
         layout.label(text="Импорт текстур по материалам", icon='TEXTURE')
         layout.separator()
         
+        # Create a property for storing the path
         scene = context.scene
         if not hasattr(scene, "texture_importer_path"):
             scene.texture_importer_path = ""
@@ -258,6 +381,7 @@ class MATERIAL_PT_texture_importer(bpy.types.Panel):
         layout.prop(scene, "texture_importer_path", text="Путь к текстурам")
         layout.separator()
         
+        # Button to process all materials of active object
         if obj and obj.active_material:
             row = layout.row(align=True)
             op = row.operator("material.import_texture", text="Найти все текстуры", icon='IMPORT')
@@ -268,7 +392,7 @@ class MATERIAL_PT_texture_importer(bpy.types.Panel):
                 box.label(text="Текущий путь:", icon='INFO')
                 box.label(text=f"  {scene.texture_importer_path}")
                 
-                # Показ абсолютного пути
+                # Показываем абсолютный путь
                 abs_path = resolve_path_static(context, scene.texture_importer_path)
                 if abs_path != scene.texture_importer_path:
                     box.label(text="Абсолютный путь:")
@@ -291,6 +415,7 @@ def resolve_path_static(context, path):
     else:
         return path
 
+# Регистрация параметров
 def register_properties():
     bpy.types.Scene.texture_importer_path = bpy.props.StringProperty(
         name="Models Path",
@@ -303,6 +428,7 @@ def unregister_properties():
     del bpy.types.Scene.texture_importer_path
 
 
+# Регистрация дела
 classes = [MATERIAL_OT_import_texture, MATERIAL_PT_texture_importer]
 
 def register():
