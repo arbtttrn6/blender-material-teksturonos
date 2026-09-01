@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Teksturonos",
     "author": "arbtttrn6",
-    "version": (1, 1),
+    "version": (1, 2),
     "blender": (2, 80, 0),
     "location": "Properties > Material > Teksturonos",
     "description": "Для разного вытащенного с помощью UmodelViewer-а. По имени материалов на моделях ищет соответствующие mat-файлы для получения из них диффузных текстур и текстур нормалей.",
@@ -267,7 +267,7 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
                     diffuse_node.image = diffuse_img
                     # Соединение изображения с базовым цветом
                     if not any(link.from_node == diffuse_node for link in links):
-                        links.new(diffuse_node.outputs['Color'], principled_node.inputs['Base Color'])
+                            links.new(diffuse_node.outputs['Color'], principled_node.inputs['Base Color'])
             
             # Обработка текстуры нормалей
             if normal_path:
@@ -331,7 +331,10 @@ class MATERIAL_OT_import_texture(bpy.types.Operator):
                     specular_node.image.colorspace_settings.name = 'Non-Color'
                     
                     if not any(link.from_node == specular_node for link in links):
-                        links.new(specular_node.outputs['Color'], principled_node.inputs['Specular'])
+                        if bpy.app.version < (4, 0, 0):
+                            links.new(specular_node.outputs['Color'], principled_node.inputs['Specular'])
+                        else:
+                            links.new(specular_node.outputs['Color'], principled_node.inputs['Specular IOR Level'])
             
             return True
             
